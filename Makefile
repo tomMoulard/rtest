@@ -1,6 +1,5 @@
 IMAGE ?= rtest:dev
-VERSION ?= dev
-SHELL_FILES = install.sh scripts/build-release.sh test/e2e.sh \
+SHELL_FILES = install.sh test/e2e.sh \
 	rootfs/usr/local/bin/* rootfs/usr/local/lib/rtest/common.sh
 
 .PHONY: lint unit build test release
@@ -22,4 +21,4 @@ test: build
 	RTEST_IMAGE=$(IMAGE) test/e2e.sh
 
 release:
-	scripts/build-release.sh $(VERSION)
+	goreleaser release --snapshot --clean

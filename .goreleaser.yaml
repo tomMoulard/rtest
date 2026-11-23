@@ -1,0 +1,36 @@
+# GoReleaser builds the rtest client and publishes the GitHub release.
+# https://goreleaser.com/customization/
+version: 2
+
+project_name: 'rtest'
+
+builds:
+  - id: 'rtest'
+    main: './cmd/rtest'
+    binary: 'rtest'
+    env:
+      - 'CGO_ENABLED=0'
+    goos: ['darwin', 'linux']
+    goarch: ['amd64', 'arm64']
+    flags: ['-trimpath']
+    ldflags: ['-s -w -X main.version={{ .Tag }}']
+    mod_timestamp: '{{ .CommitTimestamp }}'
+
+archives:
+  # install.sh downloads rtest_<os>_<arch>.tar.gz: keep these names.
+  - id: 'rtest'
+    formats: ['tar.gz']
+    name_template: '{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}'
+    files: ['LICENSE', 'README.md']
+
+checksum:
+  name_template: 'checksums.txt'
+  algorithm: 'sha256'
+
+changelog:
+  use: 'github-native'
+
+release:
+  github:
+    owner: 'tomMoulard'
+    name: 'rtest'

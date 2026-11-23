@@ -321,8 +321,10 @@ make test   # build the image, then run test/e2e.sh against a container
 client. It covers the toolchains, exit statuses, output streams, ignored files,
 the cache, parallel runs, timeouts, disconnects and the janitor.
 
-To release, push a tag like `v0.2.0`. CI then runs the tests, attaches the
-client archives and `checksums.txt` to a GitHub release, and publishes the
-image `tommoulard/rtest:v0.2.0`. On every push to `main`, CI publishes
+To release, push a tag like `v0.2.0`. CI then runs the tests, and
+[GoReleaser](https://goreleaser.com) builds the client archives and
+`checksums.txt` and publishes them on a GitHub release. CI also publishes the
+image `tommoulard/rtest:v0.2.0`. `make release` builds the archives locally
+in `dist/`, without a release. On every push to `main`, CI publishes
 `tommoulard/rtest:latest`. CI needs the `DOCKERHUB_USERNAME` and
 `DOCKERHUB_TOKEN` secrets to publish the image.
