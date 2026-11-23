@@ -1,0 +1,14 @@
+PATH=/opt/cargo/bin:/usr/local/go/bin:/usr/local/node/bin:/work/caches/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+RUSTUP_HOME=/opt/rustup
+CARGO_HOME=/opt/cargo
+CARGO_INCREMENTAL=0
+RUSTC_WRAPPER=sccache
+SCCACHE_DIR=/work/caches/sccache
+GOPATH=/work/caches/go
+GOCACHE=/work/caches/go-build
+XDG_CACHE_HOME=/work/caches/xdg
+XDG_DATA_HOME=/work/caches/xdg-data
+npm_config_cache=/work/caches/npm
+UV_PYTHON_INSTALL_DIR=/work/caches/uv-python
+PYTHONUNBUFFERED=1
+CI=true

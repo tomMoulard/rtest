@@ -1,0 +1,13 @@
+extends: 'default'
+
+rules:
+  document-start:
+    present: false
+  line-length:
+    max: 120
+  truthy:
+    allowed-values: ['false', 'on', 'true']
+  quoted-strings:
+    quote-type: 'single'
+    required: true
+    allow-quoted-quotes: true

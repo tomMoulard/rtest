@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# rtest-info: print the toolchain versions and the current runs.
+set -uo pipefail
+# shellcheck source=../lib/rtest/common.sh
+. /usr/local/lib/rtest/common.sh
+load_env
+
+v() { printf '%-8s %s\n' "$1" "$("${@:2}" 2>&1 | head -n 1)"; }
+v go go version
+v node node --version
+v pnpm pnpm --version
+v python python3 --version
+v uv uv --version
+v rust rustc --version
+v cargo cargo --version
+v docker docker version --format '{{.Server.Version}}'
+printf '%-8s %s\n' runs "$(find "$RTEST_RUNS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
+printf '%-8s %s\n' mirrors "$(find "$RTEST_SOURCES" -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | wc -l)"
+printf '%-8s %s\n' disk "$(df -h "$RTEST_ROOT" | awk 'NR == 2 { print $3 " used, " $4 " free" }')"

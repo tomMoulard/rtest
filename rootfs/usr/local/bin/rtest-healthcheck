@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# Healthy when sshd listens and the Docker daemon answers.
+set -euo pipefail
+pgrep -x sshd >/dev/null
+docker info >/dev/null 2>&1

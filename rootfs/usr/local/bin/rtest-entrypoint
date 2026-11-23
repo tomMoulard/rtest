@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# Container entrypoint: prepare /work, install the SSH keys, start dockerd and
+# the janitor, then run sshd in the foreground.
+set -euo pipefail
+# shellcheck source=../lib/rtest/common.sh
+. /usr/local/lib/rtest/common.sh
+
+# Make the configuration visible to SSH sessions, which do not inherit it.
+env | grep -E '^RTEST_(COPY_MODE|ORPHAN_MINUTES|SOURCE_TTL_DAYS|DOCKER_PRUNE_UNTIL)=' \
+  >/run/rtest.env 2>/dev/null || true
+
+# Authorized keys come from a mounted file or from RTEST_AUTHORIZED_KEYS.
+keys=/home/runner/.ssh/authorized_keys
+install -d -m 0700 -o runner -g runner /home/runner/.ssh
+: >"$keys"
+[ ! -r /etc/rtest/authorized_keys ] || cat /etc/rtest/authorized_keys >>"$keys"
+[ -z "${RTEST_AUTHORIZED_KEYS:-}" ] || printf '%s\n' "$RTEST_AUTHORIZED_KEYS" >>"$keys"
+chown runner:runner "$keys"
+chmod 0600 "$keys"
+grep -q . "$keys" || echo 'rtest: WARNING: no authorized SSH key, nobody can log in' >&2
+
+# The host key stays in the volume, so that clients keep trusting the server.
+install -d -m 0700 "$RTEST_ROOT/ssh"
+[ -f "$RTEST_ROOT/ssh/ssh_host_ed25519_key" ] ||
+  ssh-keygen -q -t ed25519 -N '' -f "$RTEST_ROOT/ssh/ssh_host_ed25519_key"
+
+install -d -o runner -g runner "$RTEST_SOURCES" "$RTEST_RUNS" "$RTEST_STATE" \
+  "$RTEST_LOCKS" "$RTEST_ROOT/caches" "$RTEST_ROOT/caches/cargo/registry" \
+  "$RTEST_ROOT/caches/cargo/git"
+chown runner:runner "$RTEST_ROOT/caches" "$RTEST_SOURCES" "$RTEST_RUNS"
+
+# cgroup v2 nesting, as in the official docker:dind image: move the processes
+# out of the root cgroup, then delegate every controller to the children.
+if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+  mkdir -p /sys/fs/cgroup/init
+  xargs -rn1 </sys/fs/cgroup/cgroup.procs >/sys/fs/cgroup/init/cgroup.procs 2>/dev/null || :
+  sed -e 's/ / +/g' -e 's/^/+/' </sys/fs/cgroup/cgroup.controllers \
+    >/sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || :
+fi
+
+dockerd --host=unix:///var/run/docker.sock >/var/log/dockerd.log 2>&1 &
+for _ in $(seq 60); do
+  docker info >/dev/null 2>&1 && break
+  sleep 1
+done
+docker info >/dev/null 2>&1 || {
+  echo 'rtest: dockerd did not start, see /var/log/dockerd.log' >&2
+  tail -n 20 /var/log/dockerd.log >&2
+}
+
+rtest-janitor --loop &
+
+exec /usr/sbin/sshd -D -e

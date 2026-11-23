@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# rtest-sync KEY RUN SEED <rsync server arguments...>
+#
+# The client runs this through `rsync --rsync-path`. It holds the lock of the
+# source mirror KEY, receives the changed files into the mirror, then takes a
+# private copy of the mirror for the run RUN. SEED names the repository: a new
+# mirror starts as a copy of the latest mirror of the same repository, so that
+# only the differences go over the network.
+set -euo pipefail
+# shellcheck source=../lib/rtest/common.sh
+. /usr/local/lib/rtest/common.sh
+load_env
+
+[ $# -ge 4 ] || die 'usage: rtest-sync KEY RUN SEED rsync-args...'
+key=$1 run=$2 seed=$3
+shift 3
+check_name "$key"
+check_name "$run"
+[ "$seed" = - ] || check_name "$seed"
+
+src=$RTEST_SOURCES/$key
+dst=$RTEST_RUNS/$run
+[ "${!#}" = "$src/" ] || die "unexpected destination '${!#}', want '$src/'"
+[ ! -e "$dst" ] || die "run $run already exists"
+
+mkdir -p "$RTEST_SOURCES/.by-repo" "$RTEST_RUNS" "$RTEST_LOCKS"
+exec 9>"$RTEST_LOCKS/$key.lock"
+flock 9
+
+if [ ! -d "$src" ] && [ "$seed" != - ] && [ -d "$RTEST_SOURCES/.by-repo/$seed/" ]; then
+  from=$(readlink -f "$RTEST_SOURCES/.by-repo/$seed")
+  echo "rtest: new mirror, seeding it from $(basename "$from")" >&2
+  # Copy under the lock of the other mirror, so that the copy is consistent.
+  flock "$RTEST_LOCKS/$(basename "$from").lock" cp -a --reflink=auto "$from" "$src.seed"
+  mv "$src.seed" "$src"
+fi
+
+rsync "$@"
+
+case ${RTEST_COPY_MODE:-copy} in
+  hardlink) cp -al "$src" "$dst" ;;
+  *) cp -a --reflink=auto "$src" "$dst" ;;
+esac
+# cp -a keeps the old time stamps. A new time stamp tells the janitor that the
+# copy is fresh, and that the mirror is in use.
+touch "$src" "$dst"
+[ "$seed" = - ] || ln -sfn "../$key" "$RTEST_SOURCES/.by-repo/$seed"

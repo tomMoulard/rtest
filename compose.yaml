@@ -1,0 +1,14 @@
+# Standalone example. In make-my-server, use rtest/docker-compose.rtest.yml.
+services:
+  rtest:
+    image: 'tommoulard/rtest:${RTEST_IMAGE_VERSION:-latest}'
+    build: '.'
+    hostname: 'rtest'
+    privileged: true
+    ports:
+      - '${RTEST_SSH_PORT:-2222}:22'
+    restart: 'always'
+    volumes:
+      - './conf:/etc/rtest:ro'
+      - './data/work:/work'
+      - './data/docker:/var/lib/docker'

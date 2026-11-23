@@ -1,0 +1,57 @@
+name: 'CI'
+
+on:  # yamllint disable-line rule:truthy
+  push: {}
+  pull_request: {}
+
+jobs:
+  lint:
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: 'actions/checkout@v7'
+      - name: 'shellcheck'
+        run: 'shellcheck client/rtest test/e2e.sh rootfs/usr/local/bin/* rootfs/usr/local/lib/rtest/common.sh'
+      - name: 'hadolint'
+        run: 'docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile'
+      - name: 'yamllint'
+        run: 'pipx run yamllint .'
+
+  e2e:
+    runs-on: 'ubuntu-latest'
+    timeout-minutes: 30
+    steps:
+      - uses: 'actions/checkout@v7'
+      - uses: 'docker/setup-buildx-action@v4'
+      - name: 'Build the image'
+        uses: 'docker/build-push-action@v7'
+        with:
+          load: true
+          tags: 'rtest:dev'
+          cache-from: 'type=gha'
+          cache-to: 'type=gha,mode=max'
+      - name: 'Install the client dependencies'
+        run: 'sudo apt-get update && sudo apt-get install -y rsync openssh-client'
+      - name: 'End-to-end test'
+        run: 'test/e2e.sh'
+
+  publish:
+    if: "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    needs: ['lint', 'e2e']
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: 'actions/checkout@v7'
+      - uses: 'docker/setup-qemu-action@v4'
+      - uses: 'docker/setup-buildx-action@v4'
+      - uses: 'docker/login-action@v4'
+        with:
+          username: '${{ secrets.DOCKERHUB_USERNAME }}'
+          password: '${{ secrets.DOCKERHUB_TOKEN }}'
+      - uses: 'docker/build-push-action@v7'
+        with:
+          platforms: 'linux/amd64,linux/arm64'
+          push: true
+          tags: |
+            tommoulard/rtest:latest
+            tommoulard/rtest:${{ github.sha }}
+          cache-from: 'type=gha'
+          cache-to: 'type=gha,mode=max'

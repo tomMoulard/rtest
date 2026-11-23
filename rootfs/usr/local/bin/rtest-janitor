@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+# rtest-janitor [--loop]
+#
+# Deletes run copies that no live process owns, mirrors that nobody used for
+# RTEST_SOURCE_TTL_DAYS days, and old Docker objects.
+set -uo pipefail
+# shellcheck source=../lib/rtest/common.sh
+. /usr/local/lib/rtest/common.sh
+load_env
+
+orphan_minutes=${RTEST_ORPHAN_MINUTES:-60}
+source_days=${RTEST_SOURCE_TTL_DAYS:-14}
+docker_until=${RTEST_DOCKER_PRUNE_UNTIL:-72h}
+interval=${RTEST_JANITOR_INTERVAL:-600}
+
+sweep() {
+  local dir run pid
+  for dir in "$RTEST_RUNS"/*/; do
+    [ -d "$dir" ] || continue
+    run=$(basename "$dir")
+    pid=$(cat "$RTEST_STATE/$run.pid" 2>/dev/null || true)
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      continue
+    fi
+    if [ -n "$(find "$dir" -maxdepth 0 -mmin +"$orphan_minutes")" ]; then
+      echo "rtest-janitor: delete run $run"
+      rm -rf "$dir" "$RTEST_STATE/$run.pid"
+    fi
+  done
+
+  find "$RTEST_SOURCES" -mindepth 1 -maxdepth 1 -type d ! -name '.*' \
+    -mtime +"$source_days" -print0 2>/dev/null |
+    while IFS= read -r -d '' dir; do
+      echo "rtest-janitor: delete mirror $(basename "$dir")"
+      flock "$RTEST_LOCKS/$(basename "$dir").lock" rm -rf "$dir"
+    done
+  find "$RTEST_SOURCES/.by-repo" -xtype l -delete 2>/dev/null
+
+  if [ "$docker_until" != off ]; then
+    docker container prune -f --filter "until=$docker_until" >/dev/null 2>&1
+    docker image prune -af --filter "until=$docker_until" >/dev/null 2>&1
+    docker network prune -f --filter "until=$docker_until" >/dev/null 2>&1
+    docker volume prune -af >/dev/null 2>&1
+  fi
+}
+
+if [ "${1:-}" = --loop ]; then
+  while :; do
+    sweep
+    sleep "$interval"
+  done
+fi
+sweep

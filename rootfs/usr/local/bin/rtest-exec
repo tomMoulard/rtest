@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# rtest-exec [--keep] [--timeout SECONDS] RUN SCRIPT_BASE64
+#
+# Runs the decoded bash script in the private copy of the run RUN, streams its
+# output, exits with its exit status, then deletes the copy. The script stops
+# when the SSH client goes away.
+set -uo pipefail
+# shellcheck source=../lib/rtest/common.sh
+. /usr/local/lib/rtest/common.sh
+load_env
+
+keep=0 limit=0
+while [ $# -gt 0 ]; do
+  case $1 in
+    --keep) keep=1; shift ;;
+    --timeout) limit=${2:?}; shift 2 ;;
+    *) break ;;
+  esac
+done
+[ $# -eq 2 ] || die 'usage: rtest-exec [--keep] [--timeout SECONDS] RUN SCRIPT_BASE64'
+run=$1
+check_name "$run"
+case $limit in *[!0-9]*) die "invalid timeout: $limit" ;; esac
+script=$(printf %s "$2" | base64 -d) || die 'cannot decode the script'
+
+dir=$RTEST_RUNS/$run
+[ -d "$dir" ] || die "run $run does not exist"
+mkdir -p "$RTEST_STATE"
+pidfile=$RTEST_STATE/$run.pid
+echo $$ >"$pidfile"
+
+child='' watcher=''
+cleanup() {
+  [ -z "$watcher" ] || kill -- "-$watcher" 2>/dev/null
+  if [ "$keep" = 1 ]; then
+    echo "rtest: kept $dir" >&2
+  else
+    rm -rf "$dir"
+  fi
+  rm -f "$pidfile"
+}
+trap cleanup EXIT
+
+# Job control puts the script in its own process group, so that one signal
+# stops the script and everything it started.
+set -m
+cd "$dir" || die "cannot enter $dir"
+if [ "$limit" -gt 0 ]; then
+  timeout --kill-after=10 "$limit" bash -c "$script" </dev/null &
+else
+  bash -c "$script" </dev/null &
+fi
+child=$!
+
+stop() { kill -TERM -- "-$child" 2>/dev/null; }
+trap stop HUP INT TERM PIPE
+
+# Without a terminal, the client keeps stdin open for the duration of the run.
+# End of file on stdin means that the client is gone.
+if [ ! -t 0 ]; then
+  { cat >/dev/null; kill -TERM -- "-$child" 2>/dev/null; } &
+  watcher=$!
+fi
+
+while :; do
+  wait "$child"
+  rc=$?
+  kill -0 "$child" 2>/dev/null || break
+done
+exit "$rc"

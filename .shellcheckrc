@@ -1,0 +1,4 @@
+source-path=SCRIPTDIR
+external-sources=true
+# Functions called from traps look unused to shellcheck.
+disable=SC2329
