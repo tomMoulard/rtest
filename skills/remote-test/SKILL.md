@@ -12,9 +12,26 @@ A non-zero exit status is a failure, exactly as for a local run.
 
 ## Before the first run
 
-Run `rtest --info` once per session. It prints the toolchain versions on the
-server. If it fails with exit status 255, SSH cannot reach the server: tell the
-user, and do not fall back to a local run without asking.
+1. Find the client. Use the first path that works as `rtest` in the commands
+   below:
+
+   ```bash
+   command -v rtest || ls ~/.local/bin/rtest
+   ```
+
+2. If the client is missing, install it, then tell the user that you did. The
+   script downloads the latest release for this platform, makes sure that its
+   checksum is correct, and installs `~/.local/bin/rtest`:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/tomMoulard/rtest/main/install.sh | sh
+   ```
+
+3. Run `rtest --info` once per session. It prints the toolchain versions on
+   the server. If it fails with exit status 255, SSH cannot reach the server.
+   Tell the user, and do not fall back to a local run without asking. The
+   user configures the server as the SSH host `rtest` in `~/.ssh/config`, or
+   sets `RTEST_HOST`.
 
 ## Run a command
 

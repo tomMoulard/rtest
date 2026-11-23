@@ -8,7 +8,7 @@ test. A non-zero exit status is a failure, as in CI.
 The repository has three parts:
 
 1. A Docker image: an SSH server with Go, Node, Python, Rust and Docker-in-Docker.
-2. The `rtest` client: one bash script for macOS and Linux.
+2. The `rtest` client: one Go binary for macOS and Linux.
 3. A `remote-test` skill: it tells Claude Code and Codex how to use `rtest`.
 
 ## How a run works
@@ -104,11 +104,16 @@ system, and the caches use them.
 
 ## Install the client
 
-1. Copy the client to a directory in your `PATH`:
+1. Install the client in `~/.local/bin`. The script downloads the latest
+   release for your platform and makes sure that its checksum is correct:
 
    ```bash
-   install -m 0755 client/rtest ~/.local/bin/rtest
+   curl -fsSL https://raw.githubusercontent.com/tomMoulard/rtest/main/install.sh | sh
    ```
+
+   With Go, you can also build it: `go install github.com/tomMoulard/rtest/cmd/rtest@latest`.
+   The [releases page](https://github.com/tomMoulard/rtest/releases) has the
+   archives for macOS and Linux, on amd64 and arm64.
 
 2. Add the server to `~/.ssh/config`. The client uses the host name `rtest` by default:
 
@@ -125,7 +130,11 @@ system, and the caches use them.
    rtest --info
    ```
 
-The client needs bash, rsync and ssh. The macOS versions work.
+The client calls your `ssh` and `rsync` commands, so your SSH configuration,
+agent and jump hosts apply. The macOS versions of `ssh` and `rsync` work.
+
+The install script reads two variables. `RTEST_VERSION` selects a release tag
+instead of the latest release. `RTEST_INSTALL_DIR` selects another directory.
 
 ## Use the client
 
@@ -148,6 +157,12 @@ rtest -H other-box make test                 # use another SSH host
 | `-k, --keep` | Keep the remote copy for debugging. The janitor deletes it after `RTEST_ORPHAN_MINUTES`. |
 | `-q, --quiet` | Do not print the `rtest:` status lines. |
 | `--info` | Print the toolchain versions, the runs in progress and the free disk space. |
+
+| Variable | Effect |
+|---|---|
+| `RTEST_HOST` | Default SSH destination. |
+| `RTEST_SSH` | SSH command and its options, split on spaces. The default is `ssh`. |
+| `RTEST_NO_MUX` | Set to `1` to disable SSH connection sharing. |
 
 ### Exit status
 
@@ -236,42 +251,51 @@ At exit, the client deletes its local temporary files.
 
 ## Install the skill
 
-The `remote-test` skill tells an agent the right moment and the right way to call `rtest`. It works
-with Claude Code and with Codex. Install the client first.
+The `remote-test` skill tells an agent the right moment and the right way to
+call `rtest`. It works with Claude Code and with Codex. You do not need a
+clone of this repository. If the client is missing, the skill installs it with
+the install script.
 
-For Claude Code, for all your projects:
-
-```bash
-mkdir -p ~/.claude/skills
-ln -s "$PWD/skills/remote-test" ~/.claude/skills/remote-test
-```
-
-For Codex:
+For Claude Code, install the plugin from this repository:
 
 ```bash
-mkdir -p ~/.codex/skills
-ln -s "$PWD/skills/remote-test" ~/.codex/skills/remote-test
+claude plugin marketplace add tomMoulard/rtest
+claude plugin install rtest@rtest
 ```
 
-Run the commands from the root of this repository. Because of the symbolic
-link, a pull of this repository also updates the skill. To install the skill for one
-project only, link it into `.claude/skills/` or `.codex/skills/` in that
-project.
+In a Claude Code session, `/plugin install rtest --marketplace tomMoulard/rtest`
+does the same in one step. The skill name is then `rtest:remote-test`. To get
+a new version, run `claude plugin update rtest@rtest`.
+
+For Codex, download the skill:
+
+```bash
+mkdir -p ~/.codex/skills/remote-test
+curl -fsSL -o ~/.codex/skills/remote-test/SKILL.md \
+  https://raw.githubusercontent.com/tomMoulard/rtest/main/skills/remote-test/SKILL.md
+```
+
+The same command with `~/.claude/skills/remote-test` installs the skill in
+Claude Code without the plugin. To get a new version, run the command again.
 
 To make sure that the agent sees the skill, start a new session and ask:
-"run the unit tests remotely". The agent calls `rtest --info`, then `rtest`
-with the test command.
+"run the unit tests remotely". The agent finds or installs `rtest`, calls
+`rtest --info`, then calls `rtest` with the test command.
 
 ## Development
 
 ```bash
-make lint   # shellcheck, hadolint, yamllint
+make lint   # gofmt, go vet, shellcheck, hadolint, yamllint
+make unit   # Go unit tests of the client
 make test   # build the image, then run test/e2e.sh against a container
 ```
 
-`test/e2e.sh` starts a container, then drives it with the client. It covers
-the toolchains, exit statuses, output streams, ignored files, the cache,
-parallel runs, timeouts, disconnects and the janitor.
+`test/e2e.sh` builds the client, starts a container, then drives it with the
+client. It covers the toolchains, exit statuses, output streams, ignored files,
+the cache, parallel runs, timeouts, disconnects and the janitor.
 
-On every push to `main`, CI publishes `tommoulard/rtest:latest` for amd64 and
-arm64. CI needs the `DOCKERHUB_USERNAME` and `DOCKERHUB_TOKEN` secrets.
+To release, push a tag like `v0.2.0`. CI then runs the tests, attaches the
+client archives and `checksums.txt` to a GitHub release, and publishes the
+image `tommoulard/rtest:v0.2.0`. On every push to `main`, CI publishes
+`tommoulard/rtest:latest`. CI needs the `DOCKERHUB_USERNAME` and
+`DOCKERHUB_TOKEN` secrets to publish the image.

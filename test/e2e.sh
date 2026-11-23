@@ -3,22 +3,32 @@
 # shellcheck disable=SC2015,SC2016
 # End-to-end test: start an rtest container, then drive it with the client.
 #
-#   test/e2e.sh              uses the image rtest:dev
-#   RTEST_IMAGE=x test/e2e.sh
+#   test/e2e.sh              uses the image rtest:dev and builds the client
+#   RTEST_IMAGE=x RTEST_BIN=/path/to/rtest test/e2e.sh
 #
 # It works with bash 3.2 (macOS) and with bash 5 (Linux CI).
 set -uo pipefail
 
 repo=$(cd "$(dirname "$0")/.." && pwd -P)
 image=${RTEST_IMAGE:-rtest:dev}
-rtest=$repo/client/rtest
 name=rtest-e2e-$$
 work=$(mktemp -d "${TMPDIR:-/tmp}/rtest-e2e.XXXXXX")
 work=$(cd "$work" && pwd -P)
 failures=0
+rtest=${RTEST_BIN:-}
+if [ -z "$rtest" ]; then
+  rtest=$work/rtest
+  (cd "$repo" && go build -o "$rtest" ./cmd/rtest) || exit 1
+fi
+# The client keeps its SSH control sockets in the user cache directory.
+if [ "$(uname)" = Darwin ]; then
+  controls=$HOME/Library/Caches/rtest
+else
+  controls=${XDG_CACHE_HOME:-$HOME/.cache}/rtest
+fi
 
 cleanup() {
-  ssh -F "$work/ssh_config" -o ControlPath="$HOME/.ssh/rtest-%C" -O exit rtest-e2e >/dev/null 2>&1
+  ssh -F "$work/ssh_config" -o ControlPath="$controls/%C" -O exit rtest-e2e >/dev/null 2>&1
   docker rm -f -v "$name" >/dev/null 2>&1
   rm -rf "$work"
 }

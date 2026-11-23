@@ -1,7 +1,9 @@
 name: 'CI'
 
 on:  # yamllint disable-line rule:truthy
-  push: {}
+  push:
+    branches: ['main']
+    tags: ['v*']
   pull_request: {}
 
 jobs:
@@ -9,18 +11,32 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
       - uses: 'actions/checkout@v7'
-      - name: 'shellcheck'
-        run: 'shellcheck client/rtest test/e2e.sh rootfs/usr/local/bin/* rootfs/usr/local/lib/rtest/common.sh'
-      - name: 'hadolint'
-        run: 'docker run --rm -i hadolint/hadolint:v2.15.1 < Dockerfile'
-      - name: 'yamllint'
-        run: 'pipx run yamllint .'
+      - uses: 'actions/setup-go@v7'
+        with:
+          go-version-file: 'go.mod'
+      - name: 'Install yamllint'
+        run: 'pipx install yamllint'
+      - name: 'Lint'
+        run: 'make lint'
+
+  unit:
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: 'actions/checkout@v7'
+      - uses: 'actions/setup-go@v7'
+        with:
+          go-version-file: 'go.mod'
+      - name: 'Unit tests'
+        run: 'make unit'
 
   e2e:
     runs-on: 'ubuntu-latest'
     timeout-minutes: 30
     steps:
       - uses: 'actions/checkout@v7'
+      - uses: 'actions/setup-go@v7'
+        with:
+          go-version-file: 'go.mod'
       - uses: 'docker/setup-buildx-action@v4'
       - name: 'Build the image'
         uses: 'docker/build-push-action@v7'
@@ -34,9 +50,9 @@ jobs:
       - name: 'End-to-end test'
         run: 'test/e2e.sh'
 
-  publish:
-    if: "github.event_name == 'push' && github.ref == 'refs/heads/main'"
-    needs: ['lint', 'e2e']
+  publish-image:
+    if: "github.event_name == 'push'"
+    needs: ['lint', 'unit', 'e2e']
     runs-on: 'ubuntu-latest'
     steps:
       - uses: 'actions/checkout@v7'
@@ -46,12 +62,36 @@ jobs:
         with:
           username: '${{ secrets.DOCKERHUB_USERNAME }}'
           password: '${{ secrets.DOCKERHUB_TOKEN }}'
+      - name: 'Image tags'
+        id: 'tags'
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            echo "tags=tommoulard/rtest:${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=tommoulard/rtest:latest,tommoulard/rtest:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          fi
       - uses: 'docker/build-push-action@v7'
         with:
           platforms: 'linux/amd64,linux/arm64'
           push: true
-          tags: |
-            tommoulard/rtest:latest
-            tommoulard/rtest:${{ github.sha }}
+          tags: '${{ steps.tags.outputs.tags }}'
           cache-from: 'type=gha'
           cache-to: 'type=gha,mode=max'
+
+  release:
+    if: "github.event_name == 'push' && github.ref_type == 'tag'"
+    needs: ['lint', 'unit', 'e2e']
+    runs-on: 'ubuntu-latest'
+    permissions:
+      contents: 'write'
+    steps:
+      - uses: 'actions/checkout@v7'
+      - uses: 'actions/setup-go@v7'
+        with:
+          go-version-file: 'go.mod'
+      - name: 'Build the binaries'
+        run: 'scripts/build-release.sh "$GITHUB_REF_NAME"'
+      - name: 'Publish the release'
+        env:
+          GH_TOKEN: '${{ github.token }}'
+        run: 'gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --generate-notes'

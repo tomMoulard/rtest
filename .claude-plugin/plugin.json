@@ -1,0 +1,17 @@
+{
+  "name": "rtest",
+  "version": "0.1.0",
+  "description": "The remote-test skill: offload tests to an rtest server with the rtest client, which it installs when it is missing.",
+  "author": {
+    "name": "tomMoulard",
+    "url": "https://github.com/tomMoulard"
+  },
+  "homepage": "https://github.com/tomMoulard/rtest",
+  "repository": "https://github.com/tomMoulard/rtest",
+  "keywords": [
+    "testing",
+    "ci",
+    "ssh",
+    "remote"
+  ]
+}
