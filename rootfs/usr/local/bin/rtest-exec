@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
-# rtest-exec [--keep] [--timeout SECONDS] RUN SCRIPT_BASE64
+# rtest-exec [--keep] [--quiet] [--timeout SECONDS] RUN SCRIPT_BASE64
 #
-# Runs the decoded bash script in the private copy of the run RUN, streams its
-# output, exits with its exit status, then deletes the copy. The script stops
-# when the SSH client goes away.
+# Waits for its turn in the run queue, then runs the decoded bash script in
+# the private copy of the run RUN, streams its output, exits with its exit
+# status, and deletes the copy. The script stops when the SSH client goes away.
 set -uo pipefail
 # shellcheck source=../lib/rtest/common.sh
 . /usr/local/lib/rtest/common.sh
 load_env
 
-keep=0 limit=0
+keep=0 quiet=0 limit=0
 while [ $# -gt 0 ]; do
   case $1 in
     --keep) keep=1; shift ;;
+    --quiet) quiet=1; shift ;;
     --timeout) limit=${2:?}; shift 2 ;;
     *) break ;;
   esac
 done
-[ $# -eq 2 ] || die 'usage: rtest-exec [--keep] [--timeout SECONDS] RUN SCRIPT_BASE64'
+[ $# -eq 2 ] || die 'usage: rtest-exec [--keep] [--quiet] [--timeout SECONDS] RUN SCRIPT_BASE64'
 run=$1
 check_name "$run"
 case $limit in *[!0-9]*) die "invalid timeout: $limit" ;; esac
@@ -25,13 +26,16 @@ script=$(printf %s "$2" | base64 -d) || die 'cannot decode the script'
 
 dir=$RTEST_RUNS/$run
 [ -d "$dir" ] || die "run $run does not exist"
-mkdir -p "$RTEST_STATE"
+mkdir -p "$RTEST_STATE" "$RTEST_QUEUE" "$RTEST_ACTIVE"
 pidfile=$RTEST_STATE/$run.pid
 echo $$ >"$pidfile"
 
-child='' watcher=''
+say() { [ "$quiet" = 1 ] || echo "rtest: $*" >&2; }
+
+child='' watcher='' ticket='' slot=''
 cleanup() {
   [ -z "$watcher" ] || kill -- "-$watcher" 2>/dev/null
+  rm -f "$ticket" "$slot"
   if [ "$keep" = 1 ]; then
     echo "rtest: kept $dir" >&2
   else
@@ -40,6 +44,52 @@ cleanup() {
   rm -f "$pidfile"
 }
 trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+# Queue. Tickets sort by creation time, and only the oldest ticket can start.
+# It starts when the host has room for one more run (see admit).
+ticket=$RTEST_QUEUE/$(date +%s%N)-$run
+echo $$ >"$ticket"
+waited=0 last=''
+while :; do
+  exec 8>"$RTEST_LOCKS/queue.lock"
+  flock 8
+  prune "$RTEST_QUEUE"
+  prune "$RTEST_ACTIVE"
+  position=$(find "$RTEST_QUEUE" -mindepth 1 -maxdepth 1 -printf '%f\n' |
+    awk -v me="${ticket##*/}" '$0 <= me' | wc -l)
+  active=$(find "$RTEST_ACTIVE" -mindepth 1 -maxdepth 1 | wc -l)
+  if [ "$position" -eq 1 ] && admit "$active"; then
+    slot=$RTEST_ACTIVE/$run
+    echo $$ >"$slot"
+    rm -f "$ticket"
+    ticket=''
+    exec 8>&-
+    break
+  fi
+  exec 8>&-
+
+  [ "$position" -eq 1 ] || why="$((position - 1)) run(s) ahead in the queue"
+  message="queued at position $position, $why"
+  [ "$message" = "$last" ] || say "$message"
+  last=$message
+
+  # Wait two seconds. Without a terminal, the client keeps stdin open: end of
+  # file means that the client is gone.
+  if [ -t 0 ]; then
+    sleep 2
+  else
+    read -r -t 2 -n 1 _
+    rc=$?
+    if [ "$rc" -ne 0 ] && [ "$rc" -le 128 ]; then
+      exit 130
+    fi
+  fi
+  waited=$((waited + 2))
+done
+[ "$waited" -eq 0 ] || say "started after about ${waited}s in the queue"
 
 # Job control puts the script in its own process group, so that one signal
 # stops the script and everything it started.
@@ -55,8 +105,6 @@ child=$!
 stop() { kill -TERM -- "-$child" 2>/dev/null; }
 trap stop HUP INT TERM PIPE
 
-# Without a terminal, the client keeps stdin open for the duration of the run.
-# End of file on stdin means that the client is gone.
 if [ ! -t 0 ]; then
   { cat >/dev/null; kill -TERM -- "-$child" 2>/dev/null; } &
   watcher=$!

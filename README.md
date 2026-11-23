@@ -26,10 +26,11 @@ rtest go test ./...
 
 1. The client sends the project to a mirror on the server. rsync sends only the files that changed since the last run.
 2. The server copies the mirror into a private directory for this run. Parallel runs do not share files.
-3. The server runs the command from the same subdirectory as your shell.
-4. The output streams back. stdout and stderr stay separate.
-5. The client exits with the exit status of the command.
-6. The server deletes the private directory. The mirror stays for the next run.
+3. If the host is busy, the run waits in a queue. See [Queue](#queue).
+4. The server runs the command from the same subdirectory as your shell.
+5. The output streams back. stdout and stderr stay separate.
+6. The client exits with the exit status of the command.
+7. The server deletes the private directory. The mirror stays for the next run.
 
 ## What the image contains
 
@@ -87,6 +88,9 @@ The container listens on port 2222. Set `RTEST_SSH_PORT` to change it.
 |---|---|---|
 | `RTEST_AUTHORIZED_KEYS` | empty | SSH public keys, one per line. They add to `/etc/rtest/authorized_keys`. |
 | `RTEST_COPY_MODE` | `copy` | `copy` gives each run a full copy of the mirror. `hardlink` is faster for very large projects, see [Cache](#cache). |
+| `RTEST_MAX_RUNS` | CPU count | The most runs at the same time. `0` removes the limit. See [Queue](#queue). |
+| `RTEST_MIN_FREE_MEMORY_MB` | `1024` | A new run waits while less memory is free. `0` removes the limit. |
+| `RTEST_MAX_LOAD` | CPU count | A new run waits while the 1-minute load average is at or above this value. `0` removes the limit. |
 | `RTEST_ORPHAN_MINUTES` | `60` | The janitor deletes a run directory that no process owns after this time. |
 | `RTEST_SOURCE_TTL_DAYS` | `14` | The janitor deletes a mirror that nobody used for this number of days. |
 | `RTEST_DOCKER_PRUNE_UNTIL` | `72h` | The janitor deletes stopped containers, unused images and networks older than this, and all unused volumes. Set `off` to disable it. |
@@ -198,6 +202,29 @@ rtest go test ./pkg/a/... & rtest go test ./pkg/b/... & wait
 
 The client shares one SSH connection between its runs. Parallel runs do not
 pay the connection time again. Set `RTEST_NO_MUX=1` to disable this.
+
+### Queue
+
+A run starts only with room on the host. Other runs wait in a
+queue, in arrival order. A run starts after all of these conditions are true:
+
+1. It is the oldest run in the queue.
+2. Fewer than `RTEST_MAX_RUNS` runs are in progress.
+3. At least `RTEST_MIN_FREE_MEMORY_MB` of memory is free. The server reads the
+   host memory and the memory limit of the container.
+4. The 1-minute load average is below `RTEST_MAX_LOAD`.
+
+When no run is in progress, the oldest run always starts, so that the queue
+cannot block forever. A waiting run prints its position and the reason:
+
+```text
+rtest: queued at position 1, 2 of 2 runs in progress
+rtest: started after about 6s in the queue
+```
+
+`--timeout` counts only the time of the command, not the time in the queue.
+To leave the queue, stop the client. `rtest --info` shows the runs in progress,
+the queued runs, and whether a new run starts now.
 
 ### Stop a run
 

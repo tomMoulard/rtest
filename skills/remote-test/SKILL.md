@@ -66,6 +66,10 @@ wait $a; echo "a: $?"; wait $b; echo "b: $?"
 In Claude Code, you can also start each `rtest` call as its own background
 Bash command.
 
+When the server is busy, a run waits in a queue and prints
+`rtest: queued at position N, <reason>`. This is normal: wait for the run, and
+do not start it again. `--timeout` does not count the time in the queue.
+
 ## Read the result
 
 | Exit status | Meaning |

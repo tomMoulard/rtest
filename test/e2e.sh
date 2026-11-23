@@ -56,7 +56,8 @@ remote() { ssh -F "$work/ssh_config" rtest-e2e "$@"; }
 echo "== start $image"
 ssh-keygen -q -t ed25519 -N '' -f "$work/key"
 docker run -d --name "$name" --privileged \
-  -e RTEST_AUTHORIZED_KEYS="$(cat "$work/key.pub")" \
+  -e RTEST_AUTHORIZED_KEYS="$(cat "$work/key.pub")" -e RTEST_MAX_RUNS=2 \
+  -e RTEST_MIN_FREE_MEMORY_MB=0 -e RTEST_MAX_LOAD=0 \
   -p 127.0.0.1::22 "$image" >/dev/null || exit 1
 port=$(docker port "$name" 22/tcp | head -n 1 | sed 's/.*://')
 cat >"$work/ssh_config" <<EOF
@@ -172,20 +173,66 @@ cp -R "$proj" "$work/proj2"
 grep -q 'seeding it from proj-' "$work/out" && pass 'a new worktree starts from the mirror of the same repository' ||
   fail 'a new worktree starts from the mirror of the same repository' "$work/out"
 
-echo "== parallel, timeout, disconnect"
+echo "== parallel runs and queue (RTEST_MAX_RUNS=2)"
 start=$(date +%s)
 pids=''
 for i in 1 2 3 4; do
-  "$rtest" -q "sleep 4; echo run-$i" >"$work/par-$i" 2>&1 &
+  "$rtest" "sleep 4; echo run-$i" >"$work/par-$i" 2>&1 &
   pids="$pids $!"
 done
 ok=1
 for p in $pids; do wait "$p" || ok=0; done
 elapsed=$(($(date +%s) - start))
 for i in 1 2 3 4; do grep -q "run-$i" "$work/par-$i" || ok=0; done
-if [ "$ok" = 1 ] && [ "$elapsed" -lt 14 ]; then pass "4 parallel runs of 4s finished in ${elapsed}s"; else
-  cat "$work"/par-* >"$work/out"; echo "elapsed ${elapsed}s" >>"$work/out"; fail 'parallel runs' "$work/out"; fi
-expect 'remote copies are deleted after parallel runs' 0 remote 'test -z "$(ls -A /work/runs)"'
+if [ "$ok" = 1 ] && [ "$elapsed" -ge 8 ] && [ "$elapsed" -lt 14 ]; then
+  pass "4 runs of 4s, 2 at a time, finished in ${elapsed}s"
+else
+  cat "$work"/par-* >"$work/out"; echo "elapsed ${elapsed}s" >>"$work/out"; fail 'parallel runs, 2 at a time' "$work/out"; fi
+cat "$work"/par-* >"$work/out"
+grep -q 'queued at position 1, 2 of 2 runs in progress' "$work/out" && grep -q 'started after about' "$work/out" &&
+  pass 'queued runs say why they wait, then start' || fail 'queued runs say why they wait, then start' "$work/out"
+expect 'remote copies and queue entries are deleted after parallel runs' 0 \
+  remote 'test -z "$(find /work/runs /work/queue /work/active -mindepth 1 -maxdepth 1)"'
+
+# The memory gate holds a run while another run is in progress, and the run
+# starts when the host is idle.
+"$rtest" -q 'sleep 6' >/dev/null 2>&1 &
+holder=$!
+for _ in $(seq 20); do
+  [ "$(remote 'ls /work/active | wc -l')" -ge 1 ] && break
+  sleep 0.5
+done
+remote 'mkdir /work/runs/memtest && RTEST_MIN_FREE_MEMORY_MB=99999999 rtest-exec memtest '"$(printf 'echo mem-ok' | base64)" \
+  < <(sleep 30) >"$work/out" 2>&1
+got=$?
+wait "$holder"
+if [ "$got" = 0 ] && grep -q 'MB of memory free, 99999999 MB needed' "$work/out" && grep -q mem-ok "$work/out"; then
+  pass 'low memory holds a run until the host is idle'
+else echo "exit status $got" >>"$work/out"; fail 'low memory holds a run until the host is idle' "$work/out"; fi
+
+# A client that goes away while queued leaves no ticket and no copy.
+"$rtest" -q 'sleep 20' >/dev/null 2>&1 &
+h1=$!
+"$rtest" -q 'sleep 20' >/dev/null 2>&1 &
+h2=$!
+for _ in $(seq 20); do
+  [ "$(remote 'ls /work/active | wc -l')" -ge 2 ] && break
+  sleep 0.5
+done
+"$rtest" -q 'echo never' >"$work/out" 2>&1 &
+queued=$!
+for _ in $(seq 20); do
+  [ "$(remote 'ls /work/queue | wc -l')" -ge 1 ] && break
+  sleep 0.5
+done
+kill "$queued"
+sleep 4
+expect 'a client that leaves the queue leaves no ticket and no copy' 0 \
+  remote 'ls /work/queue /work/active /work/runs; test -z "$(ls -A /work/queue)" && test "$(ls /work/runs | wc -l)" -eq 2'
+kill "$h1" "$h2" 2>/dev/null
+wait "$h1" "$h2" 2>/dev/null
+
+echo "== timeout, disconnect"
 
 start=$(date +%s)
 expect '--timeout stops the command with exit status 124' 124 "$rtest" -q -t 2 sleep 60

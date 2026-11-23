@@ -14,6 +14,15 @@ v uv uv --version
 v rust rustc --version
 v cargo cargo --version
 v docker docker version --format '{{.Server.Version}}'
-printf '%-8s %s\n' runs "$(find "$RTEST_RUNS" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l)"
+prune "$RTEST_ACTIVE" 2>/dev/null
+prune "$RTEST_QUEUE" 2>/dev/null
+running=$(find "$RTEST_ACTIVE" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)
+printf '%-8s %s\n' running "$running"
+printf '%-8s %s\n' queued "$(find "$RTEST_QUEUE" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l)"
+if admit "$running"; then
+  printf '%-8s %s\n' room 'yes, a new run starts now'
+else
+  printf '%-8s %s\n' room "no, a new run waits: $why"
+fi
 printf '%-8s %s\n' mirrors "$(find "$RTEST_SOURCES" -mindepth 1 -maxdepth 1 -type d ! -name '.*' 2>/dev/null | wc -l)"
 printf '%-8s %s\n' disk "$(df -h "$RTEST_ROOT" | awk 'NR == 2 { print $3 " used, " $4 " free" }')"

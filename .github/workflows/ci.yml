@@ -2,7 +2,7 @@ name: 'CI'
 
 on:  # yamllint disable-line rule:truthy
   push:
-    branches: ['main']
+    branches: ['**']
     tags: ['v*']
   pull_request: {}
 
@@ -51,7 +51,7 @@ jobs:
         run: 'test/e2e.sh'
 
   publish-image:
-    if: "github.event_name == 'push'"
+    if: "github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref_type == 'tag')"
     needs: ['lint', 'unit', 'e2e']
     runs-on: 'ubuntu-latest'
     steps:

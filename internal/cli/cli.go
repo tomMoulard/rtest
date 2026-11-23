@@ -134,6 +134,9 @@ func (r *runner) run() int {
 	if r.opts.keep {
 		remote = append(remote, "--keep")
 	}
+	if r.opts.quiet {
+		remote = append(remote, "--quiet")
+	}
 	if r.opts.timeout > 0 {
 		remote = append(remote, "--timeout", strconv.Itoa(r.opts.timeout))
 	}
