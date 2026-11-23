@@ -11,4 +11,7 @@ services:
     volumes:
       - './conf:/etc/rtest:ro'
       - './data/work:/work'
-      - './data/docker:/var/lib/docker'
+      - 'rtest-docker:/var/lib/docker'
+
+volumes:
+  rtest-docker: {}

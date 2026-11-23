@@ -97,7 +97,7 @@ The container listens on port 2222. Set `RTEST_SSH_PORT` to change it.
 |---|---|
 | `/etc/rtest` | `authorized_keys`. Mount it read-only. |
 | `/work` | Mirrors, run directories, package caches, and the SSH host key. |
-| `/var/lib/docker` | The images and containers of the inner Docker engine. |
+| `/var/lib/docker` | The images and containers of the inner Docker engine. Use a named volume: the inner engine needs overlayfs, and a bind mount on macOS does not support it. |
 
 Keep `/work` on one volume. Hard links and reflinks work only inside one file
 system, and the caches use them.
